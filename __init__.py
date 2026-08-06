@@ -135,30 +135,39 @@ def _interp_egrid(unique_t, E, device, dtype):
     return torch.stack(rows).to(dtype)                               # [M, 2688]
 
 
-class _AdalnDelta(torch.nn.Module):
-    """Curve-mode AdalnProj wrapper: adds B @ A @ silu(t_emb) to the projection
-    output before the reference view/chunk."""
+def _make_adaln_forward(base, a, b, shared):
+    """Curve-mode adaln injection as a *forward-attribute* patch: returns a
+    replacement AdalnProj.forward that adds B @ A @ silu(t_emb) to the projection
+    before the reference view/chunk. Installed via add_object_patch on the
+    "<adaln_proj>.forward" attribute, so the module tree is left untouched.
 
-    def __init__(self, base, a, b, shared):
-        super().__init__()
-        self.base = base
-        self.register_buffer("a", a, persistent=False)
-        self.register_buffer("b", b, persistent=False)
-        self.shared = shared
+    Why not a wrapper module: replacing the whole AdalnProj with an nn.Module that
+    holds the original under .base injects a `.base` submodule (and its
+    `.base.linear.weight`) into the model's parameter/buffer tree. ComfyUI's
+    dynamic-VRAM streaming loader records every such path in its backup and, on
+    unload, restores it by that path via set_attr_param/set_attr_buffer — but the
+    object-patch has by then reverted AdalnProj to the plain module, so `.base`
+    no longer resolves and it crashes with
+    `AttributeError: 'AdalnProj' object has no attribute 'base'` (issue #4).
+    Patching only the .forward attribute keeps adaln_proj.linear.weight at its
+    natural path, so streaming backup/restore behaves exactly as unpatched.
 
-    def forward(self, t_emb):
-        base = self.base
+    a/b are held as plain captured tensors (never registered), so they never enter
+    the tree; they're cast to x's device/dtype per call, which also covers the
+    VRAM-offload case where the projection runs on GPU while a/b sit on CPU."""
+
+    def forward(t_emb):
         x = base.linear(F.silu(t_emb) if base.apply_silu else t_emb)
-        st = self.shared.get("silu_temb")
+        st = shared.get("silu_temb")
         if st is not None:
-            # keep every operand on x's device/dtype — under VRAM-offload flags the
-            # object-patch buffers can be stranded on CPU while x is on the GPU.
-            a = self.a.to(x.device, x.dtype)
-            b = self.b.to(x.device, x.dtype)
-            st = st.to(x.device, x.dtype)
-            x = x + (b @ (a @ st.T)).T                                # [M, out]
+            av = a.to(x.device, x.dtype)
+            bv = b.to(x.device, x.dtype)
+            sv = st.to(x.device, x.dtype)
+            x = x + (bv @ (av @ sv.T)).T                              # [M, out]
         x = x.view(x.shape[0] * base.modalities, base.expand * base.hidden)
         return x.chunk(base.expand, dim=-1)
+
+    return forward
 
 
 class MiniMaxH3TurboSampler:
@@ -176,6 +185,33 @@ class MiniMaxH3TurboSampler:
         return (comfy.samplers.KSAMPLER(_turbo_sampler),)
 
 
+class _FrugalLoRA(comfy.weight_adapter.LoRAAdapter):
+    """LoRA bypass adapter with a memory-frugal additive path.
+
+    ComfyUI's default bypass is g(base_out + h(x)); for LoRA, h(x) allocates the
+    full-size projection twice (`out` and `out * scale`) and the outer add
+    allocates a third, so each bypassed layer holds ~3× its output activation
+    transiently. On the DiT's MLP down-projection (fc2, out = hidden, over a
+    ~46k-token sequence) that is ~1.5 GB of avoidable peak per block and is what
+    OOMs low-VRAM / pruned-fp8 runs that used to fit under the old merge path
+    (issue #4). Overriding bypass_forward to accumulate up(down(x))*scale straight
+    into base_out in place keeps one temporary instead of three. base_out is the
+    module's fresh output, so the in-place add is safe. Numerically identical to
+    the stock LoRA bypass. Linear-only (all H3 lora modules are Linear); anything
+    else falls back to the stock path."""
+
+    def bypass_forward(self, org_forward, x, *args, **kwargs):
+        base_out = org_forward(x, *args, **kwargs)
+        if getattr(self, "is_conv", False):
+            return super().bypass_forward(org_forward, x, *args, **kwargs)
+        up, down, alpha = self.weights[0], self.weights[1], self.weights[2]
+        rank = down.shape[0]
+        scale = (alpha / rank if alpha is not None else 1.0) * getattr(self, "multiplier", 1.0)
+        down = down.to(dtype=x.dtype)
+        up = up.to(dtype=x.dtype)
+        return base_out.add_(F.linear(F.linear(x, down), up), alpha=scale)
+
+
 def _apply_bypass_lora(new_model, lora, modules, strength):
     """Apply the low-rank update at RUN TIME (output = base(x) + lora(x)) via
     ComfyUI's bypass injection, so it is never folded into the weights. The delta
@@ -184,28 +220,84 @@ def _apply_bypass_lora(new_model, lora, modules, strength):
     (possibly quantized) forward and adds the bf16 update in activation space,
     exactly like the standalone generate.py reference. The stock
     model_lora_keys_unet does not recognise the H3 lora naming, so build the key
-    map directly (module -> diffusion_model.<module>.weight)."""
+    map directly (module -> diffusion_model.<module>.weight). Adapters are wrapped
+    in _FrugalLoRA for the in-place additive path (see its docstring)."""
     key_map = {m: "diffusion_model.{}.weight".format(m) for m in modules}
     loaded = comfy.lora.load_lora(lora, key_map, log_missing=False)
     manager = comfy.weight_adapter.BypassInjectionManager()
     sd_keys = set(new_model.model.state_dict().keys())
     n = 0
     for key, adapter in loaded.items():
-        if (isinstance(adapter, comfy.weight_adapter.WeightAdapterBase)
-                and key in sd_keys):
-            manager.add_adapter(key, adapter, strength=strength)
-            n += 1
+        if key not in sd_keys:
+            continue
+        if isinstance(adapter, comfy.weight_adapter.LoRAAdapter):
+            adapter = _FrugalLoRA(adapter.loaded_keys, adapter.weights)
+        elif not isinstance(adapter, comfy.weight_adapter.WeightAdapterBase):
+            continue
+        manager.add_adapter(key, adapter, strength=strength)
+        n += 1
     injections = manager.create_injections(new_model.model)
     if manager.get_hook_count() > 0:
         new_model.set_injections("bypass_lora", injections)
     return n
 
 
-def _add_dbg_wrapper(new_model, dm, tag):
-    """Observability: at diffusion-model forward time, log whether a lora'd
-    module's forward has been taken over by the bypass hook (i.e. the lora is
-    actually active this forward) plus the timestep and video/audio input rms.
-    Only the first few calls are printed to avoid flooding."""
+def _apply_merge_lora(new_model, lora, modules, strength):
+    """Low-VRAM path: fold the low-rank update into the weights (add_patches, the
+    same call ComfyUI's own load_lora_for_models makes), so nothing extra is
+    computed at forward time. This is the cheapest on peak VRAM and lets small
+    GPUs run, but on a quantized base the delta is partly rounded away when it is
+    merged back into int8/fp8 (and on bf16 it sits near the ULP), i.e. softer than
+    the bypass path — the sharpness/VRAM trade the low_vram switch exposes."""
+    key_map = {m: "diffusion_model.{}.weight".format(m) for m in modules}
+    loaded = comfy.lora.load_lora(lora, key_map, log_missing=False)
+    return len(new_model.add_patches(loaded, strength))
+
+
+def _inject_adaln_egrid(new_model, dm, lora, adaln, strength):
+    """Pruned/curve base only: the adaln update lives in the 2688-dim silu(t_emb)
+    space, which the pruned base has collapsed into a small curve, so it can be
+    neither a bypass adapter nor a merged weight patch. Re-inject it at run time —
+    a shared silu(t_emb) interpolated from the bundled E-grid each forward, plus a
+    forward-attribute patch on each adaln projection that adds B @ A @ silu(t_emb)
+    (see _make_adaln_forward). Peak memory is negligible (M <= 3 rows), so this is
+    identical in both the bypass and low_vram modes."""
+    E = _egrid()
+    shared = {"silu_temb": None}
+    shift_v = float(getattr(dm, "sigma_shift_video", SHIFT_V))
+    shift_a = float(getattr(dm, "sigma_shift_audio", SHIFT_A))
+
+    def wrap(executor, *args, **kwargs):
+        ts = args[1] if len(args) > 1 else kwargs.get("timestep")
+        ctx = args[2] if len(args) > 2 else kwargs.get("context")
+        payload = kwargs.get("minimax_payload") or {}
+        has_vc = bool(payload.get("keyframes") or payload.get("refs"))
+        us = _unique_t(ts, shift_v, shift_a, has_vc)
+        shared["silu_temb"] = _interp_egrid(us, E, ctx.device, ctx.dtype)
+        return executor(*args, **kwargs)
+
+    new_model.add_wrapper_with_key(
+        comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, "h3turbo", wrap)
+    for name in adaln:                       # name = "....adaln_proj.linear"
+        a = lora[name + ".lora_A.weight"]
+        b = lora[name + ".lora_B.weight"] * strength
+        key = "diffusion_model." + name.rsplit(".linear", 1)[0]
+        new_model.add_object_patch(
+            key + ".forward",
+            _make_adaln_forward(new_model.get_model_object(key), a, b, shared))
+
+
+def _add_dbg_wrapper(new_model, dm, tag, mode):
+    """Observability: at diffusion-model forward time, log that the lora is
+    actually active this forward, plus the timestep and video/audio input rms.
+    Only the first few calls are printed to avoid flooding.
+
+    The activity canary depends on `mode`. In bypass mode a lora'd module's
+    forward is taken over by BypassForwardHook, so qkv_proj.forward_owner reads
+    `BypassForwardHook` iff the lora is live. In merge mode the delta is folded
+    into the weights and the forward stays the base Linear, so the owner is
+    expected to be the base module — activity is instead reflected by the layer
+    carrying a patch (weight_function), which we report separately."""
     st = {"n": 0}
 
     def wrap(executor, *args, **kwargs):
@@ -214,8 +306,10 @@ def _add_dbg_wrapper(new_model, dm, tag):
             try:
                 m0 = dm.blocks[0].attn.qkv_proj
                 owner = type(getattr(m0.forward, "__self__", None)).__name__
+                has_wf = bool(getattr(m0, "weight_function", None)) or \
+                    getattr(m0, "weight_lowvram_function", None) is not None
             except Exception as e:                       # noqa
-                owner = "err:%s" % e
+                owner, has_wf = "err:%s" % e, "?"
             ts = args[1] if len(args) > 1 else kwargs.get("timestep")
             xx = args[0] if args else kwargs.get("x")
             try:
@@ -226,8 +320,14 @@ def _add_dbg_wrapper(new_model, dm, tag):
                 vr = ar = -1.0
                 dt = "?"
             tsv = float(ts.flatten()[0]) if ts is not None else -1
-            print(f"[H3TURBO fwd {tag}] call#{st['n']}  qkv_proj.forward_owner={owner} "
-                  f"(BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected="
+            if mode == "merge":
+                canary = (f"qkv_proj.forward_owner={owner} weight_patched={has_wf} "
+                          f"(merge: delta folded into weights; owner is the base "
+                          f"Linear, patch presence => lora ACTIVE)")
+            else:
+                canary = (f"qkv_proj.forward_owner={owner} "
+                          f"(BypassForwardHook => lora ACTIVE; else => BASE ONLY!)")
+            print(f"[H3TURBO fwd {tag}/{mode}] call#{st['n']}  {canary}  is_injected="
                   f"{getattr(new_model, 'is_injected', '?')}  timestep={tsv:.2f}  "
                   f"video_rms={vr:.4f} audio_rms={ar:.4f} dtype={dt}", flush=True)
         return executor(*args, **kwargs)
@@ -244,6 +344,15 @@ class MiniMaxH3TurboLoRA:
             "lora_name": (folder_paths.get_filename_list("loras"),),
             "strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0,
                                    "step": 0.01}),
+            "low_vram": ("BOOLEAN", {
+                "default": False,
+                "label_on": "merge (low VRAM, softer)",
+                "label_off": "bypass (sharp, more VRAM)",
+                "tooltip": "OFF (default): apply the LoRA at run time (bypass) — "
+                           "sharpest, but costs extra peak VRAM. ON: merge the "
+                           "LoRA into the weights — lowest VRAM so small GPUs can "
+                           "run, but softer on quantized bases (the delta is "
+                           "partly rounded away). Turn ON only if you OOM."}),
         }}
 
     RETURN_TYPES = ("MODEL",)
@@ -251,61 +360,46 @@ class MiniMaxH3TurboLoRA:
     CATEGORY = "MiniMaxH3Turbo"
     DESCRIPTION = "Apply the MiniMax-H3 Turbo LoRA to the H3 diffusion model."
 
-    def apply_lora(self, model, lora_name, strength):
+    def apply_lora(self, model, lora_name, strength, low_vram=False):
         path = folder_paths.get_full_path("loras", lora_name)
         lora = comfy.utils.load_torch_file(path, safe_load=True)
         dm = model.model.diffusion_model
         pruned = getattr(dm, "use_adaln_curves", False)
         modules = sorted({k.rsplit(".lora_", 1)[0] for k in lora})
         new_model = model.clone()
+        mode = "merge" if low_vram else "bypass"
+        apply = _apply_merge_lora if low_vram else _apply_bypass_lora
 
-        if not pruned:
-            n = _apply_bypass_lora(new_model, lora, modules, strength)
+        # On the pruned base the adaln update can't be a weight patch (it lives in
+        # the collapsed silu(t_emb) curve), so it is always re-injected at run
+        # time regardless of mode; everything else is the "backbone", which takes
+        # the bypass or merge path per low_vram.
+        if pruned:
+            backbone = [m for m in modules if "adaln_proj" not in m]
+            adaln = [m for m in modules if "adaln_proj" in m]
+        else:
+            backbone, adaln = modules, []
+
+        n = apply(new_model, lora, backbone, strength)
+        if pruned and adaln:
+            _inject_adaln_egrid(new_model, dm, lora, adaln, strength)
+
+        try:
+            p0 = dm.blocks[0].attn.qkv_proj.weight
+            wdt, wdev = str(p0.dtype), str(p0.device)
+        except Exception:
+            wdt, wdev = "?", "?"
+        if low_vram:
+            detail = f"{n} weights patched (merged)"
+        else:
             injs = new_model.injections.get("bypass_lora", [])
-            try:
-                p0 = dm.blocks[0].attn.qkv_proj.weight
-                wdt, wdev = str(p0.dtype), str(p0.device)
-            except Exception:
-                wdt, wdev = "?", "?"
-            print(f"[MiniMaxH3TurboLoRA] full base: lora={lora_name} strength={strength} "
-                  f"| {len(modules)} lora modules, {n} adapters bound, "
-                  f"{len(injs)} bypass injections set | model={type(new_model.model).__name__} "
-                  f"weight_dtype={wdt} weight_dev={wdev}", flush=True)
-            _add_dbg_wrapper(new_model, dm, "full")
-            return (new_model,)
-
-        # pruned/curve base: run-time bypass for the backbone (same as the full
-        # base), and a custom E-grid injection for the adaln update — the pruned
-        # base has no full-width adaln to attach a standard adapter to.
-        backbone = [m for m in modules if "adaln_proj" not in m]
-        adaln = [m for m in modules if "adaln_proj" in m]
-        n = _apply_bypass_lora(new_model, lora, backbone, strength)
-
-        E = _egrid()
-        shared = {"silu_temb": None}
-        shift_v = float(getattr(dm, "sigma_shift_video", SHIFT_V))
-        shift_a = float(getattr(dm, "sigma_shift_audio", SHIFT_A))
-
-        def wrap(executor, *args, **kwargs):
-            ts = args[1] if len(args) > 1 else kwargs.get("timestep")
-            ctx = args[2] if len(args) > 2 else kwargs.get("context")
-            payload = kwargs.get("minimax_payload") or {}
-            has_vc = bool(payload.get("keyframes") or payload.get("refs"))
-            us = _unique_t(ts, shift_v, shift_a, has_vc)
-            shared["silu_temb"] = _interp_egrid(us, E, ctx.device, ctx.dtype)
-            return executor(*args, **kwargs)
-
-        new_model.add_wrapper_with_key(
-            comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, "h3turbo", wrap)
-        for name in adaln:                       # name = "....adaln_proj.linear"
-            a = lora[name + ".lora_A.weight"]
-            b = lora[name + ".lora_B.weight"] * strength
-            key = "diffusion_model." + name.rsplit(".linear", 1)[0]
-            new_model.add_object_patch(key, _AdalnDelta(
-                new_model.get_model_object(key), a, b, shared))
-        print(f"[MiniMaxH3TurboLoRA] pruned base: {n} backbone via bypass + "
-              f"{len(adaln)} adaln injected at run time", flush=True)
-        _add_dbg_wrapper(new_model, dm, "pruned")
+            detail = f"{n} adapters bound, {len(injs)} bypass injections set"
+        extra = f" + {len(adaln)} adaln injected at run time" if adaln else ""
+        print(f"[MiniMaxH3TurboLoRA] {'pruned' if pruned else 'full'} base [{mode}]: "
+              f"lora={lora_name} strength={strength} | {len(backbone)} backbone "
+              f"modules, {detail}{extra} | model={type(new_model.model).__name__} "
+              f"weight_dtype={wdt} weight_dev={wdev}", flush=True)
+        _add_dbg_wrapper(new_model, dm, "pruned" if pruned else "full", mode)
         return (new_model,)
 
 

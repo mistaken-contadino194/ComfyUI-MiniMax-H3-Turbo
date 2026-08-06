@@ -84,7 +84,19 @@ LoRA and use a stock sampler at 4 steps and the audio is broken, this is why.
 - **Resolution / length**: width and height are multiples of 32 (short edge
   typically 768); frame count is at 24 fps and snaps to the model's 17·k+5 grid
   (124 ≈ 5 s). Validated range ~124–362 frames.
-- **VRAM**: MiniMax-H3 is large (~33 B); an 80 GB GPU is comfortable.
+- **VRAM / `low_vram`**: MiniMax-H3 is large (~33 B). The LoRA node has a
+  **`low_vram`** switch that trades sharpness for peak VRAM:
+  - **off (default)** — applies the LoRA at run time (bypass): sharpest, and the
+    recommended path, but costs some extra peak VRAM.
+  - **on** — merges the LoRA into the weights: lowest peak VRAM, so smaller GPUs
+    can run and longer / higher-res clips fit, but the result is **softer on
+    quantized (`int8` / `fp8` / pruned) bases**, because the tiny update is
+    partly rounded away when it is folded back into the quantized weights.
+
+  If you hit an out-of-memory error, turn `low_vram` **on** (and/or lower the
+  resolution or frame count). The node streams the base model, so it also runs
+  on much smaller GPUs than the ~33 B size suggests — an 80 GB GPU is only
+  needed for the largest resolutions in `bypass` mode.
 
 ## License
 
