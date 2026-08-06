@@ -77,6 +77,10 @@ LoRA and use a stock sampler at 4 steps and the audio is broken, this is why.
 - **Steps**: with `ckpt850`, **4 steps is already sharp** (earlier checkpoints
   needed 6–8). Any count **≥ 4** is valid; more steps still help a little.
   Scheduler stays `simple`.
+- **LoRA strength** (node input, default `1.0`) is the dial for the
+  sharpness/artifact trade-off: if the result shows **blurry ghosting / smear**,
+  nudge strength **up** (e.g. `1.05–1.2`); if it shows **over-sharp grain /
+  artifacts**, nudge it **down** (e.g. `0.8–0.95`).
 - **Resolution / length**: width and height are multiples of 32 (short edge
   typically 768); frame count is at 24 fps and snaps to the model's 17·k+5 grid
   (124 ≈ 5 s). Validated range ~124–362 frames.
