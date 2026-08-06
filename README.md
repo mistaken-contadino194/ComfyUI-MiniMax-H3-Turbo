@@ -18,6 +18,10 @@ image-to-video):
 
 ## Install
 
+> 🔄 **Keep the node updated.** It's actively evolving and features arrive in new
+> versions (e.g. pruned-base support was added after the first release). Update
+> via ComfyUI-Manager, or `git pull` if you installed manually.
+
 **Via ComfyUI-Manager** — search "MiniMax-H3 Turbo" and install.
 
 **Or manually:**
