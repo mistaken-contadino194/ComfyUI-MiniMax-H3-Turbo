@@ -12,9 +12,11 @@ image-to-video):
 | **MiniMax-H3 Turbo LoRA** | `MODEL → MODEL`, applies the turbo LoRA |
 | **MiniMax-H3 Turbo Sampler (4-step)** | `→ SAMPLER`, feeds `SamplerCustomAdvanced` |
 
-> ⚠️ **Early preview.** The current LoRA is an early checkpoint — quality is
-> well short of a finished model, but already a clear step up from the base at
-> 4 steps. See the LoRA repo for details.
+> ⚠️ **Preview.** The current LoRA (`ckpt850`) is the final checkpoint of this
+> training round — sharp at 4 steps, but with known artifacts emerging
+> (plastic-looking skin, over-sharp grain); training is paused while we fix them.
+> See the [LoRA repo](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) for
+> details.
 
 ## Install
 
@@ -72,9 +74,9 @@ LoRA and use a stock sampler at 4 steps and the audio is broken, this is why.
 
 ## Notes
 
-- **Steps**: 4 works, but this early checkpoint is under-trained, so the
-  **comfort zone for sharpness is 6–8 steps**, not 4 (4 comes out softer). Any
-  count **≥ 4** is valid and **more steps look better**. Scheduler stays `simple`.
+- **Steps**: with `ckpt850`, **4 steps is already sharp** (earlier checkpoints
+  needed 6–8). Any count **≥ 4** is valid; more steps still help a little.
+  Scheduler stays `simple`.
 - **Resolution / length**: width and height are multiples of 32 (short edge
   typically 768); frame count is at 24 fps and snaps to the model's 17·k+5 grid
   (124 ≈ 5 s). Validated range ~124–362 frames.
