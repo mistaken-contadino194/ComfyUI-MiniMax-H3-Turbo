@@ -12,12 +12,15 @@ clock so 4 steps stays clean.
 """
 
 import math
+import os
 
 import torch
+import torch.nn.functional as F
 
 import comfy.samplers
 import comfy.lora
 import comfy.utils
+import comfy.patcher_extension
 import folder_paths
 
 SHIFT_V, SHIFT_A = 12.0, 3.0
@@ -82,6 +85,68 @@ def _turbo_sampler(model, x, sigmas, extra_args=None, callback=None, disable=Non
     return x
 
 
+# --- pruned / curve-mode base support -------------------------------------
+# Pruned H3 checkpoints replace the time embedder + full-width adaln with a small
+# 8-dim curve (adaln_t_table), so the LoRA's adaln update (which lives in the
+# 2688-dim silu(t_emb) space) can't be applied as a weight patch. Instead we
+# re-inject it at run time: a shared silu(t_emb) is interpolated from a bundled
+# grid each forward, and each adaln projection adds B @ A @ silu(t_emb) to its
+# output. The backbone (attn/mlp/refiner) is patched normally.
+
+_EGRID = None
+
+
+def _egrid():
+    global _EGRID
+    if _EGRID is None:
+        p = os.path.join(os.path.dirname(__file__), "h3_silu_temb_grid.safetensors")
+        _EGRID = comfy.utils.load_torch_file(p)["silu_t_emb_grid"]   # [1025, 2688]
+    return _EGRID
+
+
+def _unique_t(timestep, shift_v, shift_a, has_vis_cond):
+    sv = float((timestep.flatten()[0] / 1000.0).clamp(min=1e-6))
+    t_v = 1.0 - sv
+    t_a = 1.0 - _time_shift_sigma(sv, shift_v, shift_a)
+    s = {t_v, t_a}
+    if has_vis_cond:
+        s.add(max(t_v, 0.999))
+    return sorted(s)
+
+
+def _interp_egrid(unique_t, E, device, dtype):
+    E = E.to(device)
+    n = E.shape[0]
+    rows = []
+    for t in unique_t:
+        pos = min(max(t, 0.0), 1.0) * (n - 1)
+        i0 = min(int(math.floor(pos)), n - 2)
+        rows.append(torch.lerp(E[i0].float(), E[i0 + 1].float(), pos - i0))
+    return torch.stack(rows).to(dtype)                               # [M, 2688]
+
+
+class _AdalnDelta(torch.nn.Module):
+    """Curve-mode AdalnProj wrapper: adds B @ A @ silu(t_emb) to the projection
+    output before the reference view/chunk."""
+
+    def __init__(self, base, a, b, shared):
+        super().__init__()
+        self.base = base
+        self.register_buffer("a", a, persistent=False)
+        self.register_buffer("b", b, persistent=False)
+        self.shared = shared
+
+    def forward(self, t_emb):
+        base = self.base
+        x = base.linear(F.silu(t_emb) if base.apply_silu else t_emb)
+        st = self.shared.get("silu_temb")
+        if st is not None:
+            a, b = self.a.to(x.dtype), self.b.to(x.dtype)
+            x = x + (b @ (a @ st.to(a.device, x.dtype).T)).T          # [M, out]
+        x = x.view(x.shape[0] * base.modalities, base.expand * base.hidden)
+        return x.chunk(base.expand, dim=-1)
+
+
 class MiniMaxH3TurboSampler:
     @classmethod
     def INPUT_TYPES(cls):
@@ -116,10 +181,45 @@ class MiniMaxH3TurboLoRA:
         path = folder_paths.get_full_path("loras", lora_name)
         lora = comfy.utils.load_torch_file(path, safe_load=True)
         modules = sorted({k.rsplit(".lora_", 1)[0] for k in lora})
-        to_load = {m: "diffusion_model.{}.weight".format(m) for m in modules}
-        patches = comfy.lora.load_lora(lora, to_load, log_missing=True)
+        dm = model.model.diffusion_model
+        pruned = getattr(dm, "use_adaln_curves", False)
         new_model = model.clone()
-        new_model.add_patches(patches, strength)
+
+        if not pruned:
+            to_load = {m: "diffusion_model.{}.weight".format(m) for m in modules}
+            new_model.add_patches(comfy.lora.load_lora(lora, to_load), strength)
+            return (new_model,)
+
+        # pruned/curve base: backbone via weight patches, adaln via run-time delta
+        backbone = [m for m in modules if "adaln_proj" not in m]
+        adaln = [m for m in modules if "adaln_proj" in m]
+        to_load = {m: "diffusion_model.{}.weight".format(m) for m in backbone}
+        new_model.add_patches(comfy.lora.load_lora(lora, to_load), strength)
+
+        E = _egrid()
+        shared = {"silu_temb": None}
+        shift_v = float(getattr(dm, "sigma_shift_video", SHIFT_V))
+        shift_a = float(getattr(dm, "sigma_shift_audio", SHIFT_A))
+
+        def wrap(executor, *args, **kwargs):
+            ts = args[1] if len(args) > 1 else kwargs.get("timestep")
+            ctx = args[2] if len(args) > 2 else kwargs.get("context")
+            payload = kwargs.get("minimax_payload") or {}
+            has_vc = bool(payload.get("keyframes") or payload.get("refs"))
+            us = _unique_t(ts, shift_v, shift_a, has_vc)
+            shared["silu_temb"] = _interp_egrid(us, E, ctx.device, ctx.dtype)
+            return executor(*args, **kwargs)
+
+        new_model.add_wrapper_with_key(
+            comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, "h3turbo", wrap)
+        for name in adaln:                       # name = "....adaln_proj.linear"
+            a = lora[name + ".lora_A.weight"]
+            b = lora[name + ".lora_B.weight"] * strength
+            key = "diffusion_model." + name.rsplit(".linear", 1)[0]
+            new_model.add_object_patch(key, _AdalnDelta(
+                new_model.get_model_object(key), a, b, shared))
+        print(f"[MiniMaxH3TurboLoRA] pruned base: {len(backbone)} backbone patched "
+              f"+ {len(adaln)} adaln injected at run time", flush=True)
         return (new_model,)
 
 

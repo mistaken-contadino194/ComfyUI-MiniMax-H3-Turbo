@@ -51,9 +51,11 @@ unchanged. A ready-made t2v workflow is in
 [`example_workflows/`](example_workflows/minimax_h3_t2v_turbo.json) — drag it
 into ComfyUI to see the wiring.
 
-**Base model**: use a **non-pruned** MiniMax-H3 base — the `bf16` or the full
-`int8_convrot` DiT. The **pruned** variants (`pruned_int8`, `pruned_fp8`) use a
-different time-conditioning layer and are **not compatible** with this LoRA.
+**Base model**: works with any MiniMax-H3 base — full (`bf16`, `int8_convrot`)
+**and the pruned/curve variants** (`pruned_int8`, `pruned_fp8`). The node detects
+a pruned base automatically and re-injects the LoRA's time-conditioning at run
+time (a small `silu(t_emb)` grid ships with the node for this), so one LoRA file
+covers every base.
 
 ## Why a custom sampler
 
